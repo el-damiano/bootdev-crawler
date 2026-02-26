@@ -12,6 +12,7 @@ import (
 type Parser interface {
 	GetFirstElement(html, element string) string
 	GetFirstText(html, element string) string
+	FindUrls(baseURL *url.URL, html, element, attribute string) ([]string, error)
 }
 
 func main() {
@@ -36,9 +37,17 @@ func getFirstParagraphFromHTML(html string) string {
 	}
 }
 
-// func getURLsFromHTML(htmlBody string, baseURL *url.URL) ([]string, error) {
-// 	return nil, nil // TODO
-// }
+func getURLsFromHTML(htmlBody string, baseURL *url.URL) ([]string, error) {
+	parser := goquery.Parser{}
+	anchorUrls, err := parser.FindUrls(baseURL, htmlBody, "a", "href")
+	imageUrls, err := parser.FindUrls(baseURL, htmlBody, "img", "src")
+	urls := append(anchorUrls, imageUrls...)
+	if err != nil {
+		return nil, err
+	} else {
+		return urls, nil
+	}
+}
 
 // Normalizes a URL.
 //
