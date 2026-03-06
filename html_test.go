@@ -7,6 +7,30 @@ import (
 	"testing"
 )
 
+func TestExtractPageData(t *testing.T) {
+	inputURL := "https://crawler-test.com"
+	inputBody := `<html><body>
+        <h1>Test Title</h1>
+        <p>This is the first paragraph.</p>
+        <a href="/link1">Link 1</a>
+        <img src="/image1.jpg" alt="Image 1">
+    </body></html>`
+
+	actual := extractPageData(inputBody, inputURL)
+
+	expected := PageData{
+		URL:            "https://crawler-test.com",
+		Heading:        "Test Title",
+		FirstParagraph: "This is the first paragraph.",
+		OutgoingLinks:  []string{"https://crawler-test.com/link1"},
+		ImageUrls:      []string{"https://crawler-test.com/image1.jpg"},
+	}
+
+	if !reflect.DeepEqual(actual, expected) {
+		t.Errorf("expected %+v, got %+v", expected, actual)
+	}
+}
+
 func TestH1Exraction(t *testing.T) {
 	testCases := map[string]struct {
 		input    string
@@ -100,7 +124,7 @@ of main
 
 }
 
-func TestGetURLsFromHTML(t *testing.T) {
+func TestGetUrlsFromHTML(t *testing.T) {
 	testCases := map[string]struct {
 		inputURL  string
 		inputBody string
@@ -113,16 +137,10 @@ func TestGetURLsFromHTML(t *testing.T) {
 			expected:  []string{"https://blog.boot.dev"},
 			wantErr:   false,
 		},
-		"relative url from image": {
-			inputURL:  "https://blog.boot.dev",
-			inputBody: `<html><body><img src="/logo.png"></body></html>`,
-			expected:  []string{"https://blog.boot.dev/logo.png"},
-			wantErr:   false,
-		},
 		"mulitple anchors": {
 			inputURL:  "https://blog.boot.dev",
-			inputBody: `<html><body><img src="/logo.png"><a href="https://blog.boot.dev"><span>Boot.dev</span></a></body></html>`,
-			expected:  []string{"https://blog.boot.dev", "https://blog.boot.dev/logo.png"}, // NOTE: implementation detail, anchors are first, then images
+			inputBody: `<html><body><img src="/logo.png"><a href="https://blog.boot.dev"><a href="https://blog.boot.dev"><span>Boot.dev</span></a></body></html>`,
+			expected:  []string{"https://blog.boot.dev", "https://blog.boot.dev"},
 			wantErr:   false,
 		},
 		"no anchors or images": {
@@ -143,18 +161,6 @@ func TestGetURLsFromHTML(t *testing.T) {
 			expected:  nil,
 			wantErr:   false,
 		},
-		"<img> without src": {
-			inputURL:  "https://blog.boot.dev",
-			inputBody: `<html><body><img></body></html>`,
-			expected:  nil,
-			wantErr:   false,
-		},
-		"<img> with empty src": {
-			inputURL:  "https://blog.boot.dev",
-			inputBody: `<html><body><img src=""></body></html>`,
-			expected:  nil,
-			wantErr:   false,
-		},
 		"empty base url": {
 			inputURL:  "",
 			inputBody: `<html><body></body></html>`,
@@ -167,8 +173,6 @@ func TestGetURLsFromHTML(t *testing.T) {
 			expected:  nil,
 			wantErr:   false,
 		},
-		// TODO: will there be any errors from parsing the body? maybe empty?
-		// but maybe I'm thinking of tests as being too special
 	}
 
 	for i, testCase := range testCases {
@@ -179,7 +183,55 @@ func TestGetURLsFromHTML(t *testing.T) {
 				return
 			}
 
-			got, err := getURLsFromHTML(testCase.inputBody, baseURL)
+			got, err := getUrlsFromHTML(testCase.inputBody, baseURL)
+			if (err != nil) != testCase.wantErr {
+				t.Errorf("FAIL: unexpected error: %v", err)
+				return
+			}
+
+			if !reflect.DeepEqual(testCase.expected, got) {
+				t.Errorf("FAIL: expected %v, got %v", testCase.expected, got)
+			}
+		})
+	}
+}
+
+func TestGetImageUrlsFromHTML(t *testing.T) {
+	testCases := map[string]struct {
+		inputURL  string
+		inputBody string
+		expected  []string
+		wantErr   bool
+	}{
+		"relative url from image": {
+			inputURL:  "https://blog.boot.dev",
+			inputBody: `<html><body><img src="/logo.png"></body></html>`,
+			expected:  []string{"https://blog.boot.dev/logo.png"},
+			wantErr:   false,
+		},
+		"<img> without src": {
+			inputURL:  "https://blog.boot.dev",
+			inputBody: `<html><body><img></body></html>`,
+			expected:  nil,
+			wantErr:   false,
+		},
+		"<img> with empty src": {
+			inputURL:  "https://blog.boot.dev",
+			inputBody: `<html><body><img src=""></body></html>`,
+			expected:  nil,
+			wantErr:   false,
+		},
+	}
+
+	for i, testCase := range testCases {
+		t.Run(fmt.Sprintf("Test case %v", i), func(t *testing.T) {
+			baseURL, err := url.Parse(testCase.inputURL)
+			if (err != nil) != testCase.wantErr {
+				t.Errorf("FAIL: could not parse URL: %v", err)
+				return
+			}
+
+			got, err := getImageUrlsFromHTML(testCase.inputBody, baseURL)
 			if (err != nil) != testCase.wantErr {
 				t.Errorf("FAIL: unexpected error: %v", err)
 				return

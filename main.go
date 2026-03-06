@@ -9,14 +9,51 @@ import (
 	"github.com/el-damiano/bootdev-crawler/internal/goquery"
 )
 
+func main() {
+	fmt.Println("Hello, World!")
+}
+
+type PageData struct {
+	URL            string
+	Heading        string
+	FirstParagraph string
+	OutgoingLinks  []string
+	ImageUrls      []string
+}
+
+func extractPageData(html, pageURL string) PageData {
+	pageData := PageData{
+		URL:            pageURL,
+		Heading:        getFirstH1FromHTML(html),
+		FirstParagraph: getFirstParagraphFromHTML(html),
+		OutgoingLinks:  nil,
+		ImageUrls:      nil,
+	}
+
+	baseURL, err := url.Parse(pageURL)
+	if err != nil {
+		return pageData
+	}
+
+	outgoingLinks, err := getUrlsFromHTML(html, baseURL)
+	if err != nil {
+		outgoingLinks = nil
+	}
+
+	imageUrls, err := getImageUrlsFromHTML(html, baseURL)
+	if err != nil {
+		imageUrls = nil
+	}
+
+	pageData.OutgoingLinks = outgoingLinks
+	pageData.ImageUrls = imageUrls
+	return pageData
+}
+
 type Parser interface {
 	GetFirstElement(html, element string) string
 	GetFirstText(html, element string) string
 	FindUrls(baseURL *url.URL, html, element, attribute string) ([]string, error)
-}
-
-func main() {
-	fmt.Println("Hello, World!")
 }
 
 func getFirstH1FromHTML(html string) string {
@@ -37,11 +74,19 @@ func getFirstParagraphFromHTML(html string) string {
 	}
 }
 
-func getURLsFromHTML(htmlBody string, baseURL *url.URL) ([]string, error) {
+func getUrlsFromHTML(htmlBody string, baseURL *url.URL) ([]string, error) {
 	parser := goquery.Parser{}
-	anchorUrls, err := parser.FindUrls(baseURL, htmlBody, "a", "href")
-	imageUrls, err := parser.FindUrls(baseURL, htmlBody, "img", "src")
-	urls := append(anchorUrls, imageUrls...)
+	urls, err := parser.FindUrls(baseURL, htmlBody, "a", "href")
+	if err != nil {
+		return nil, err
+	} else {
+		return urls, nil
+	}
+}
+
+func getImageUrlsFromHTML(htmlBody string, baseURL *url.URL) ([]string, error) {
+	parser := goquery.Parser{}
+	urls, err := parser.FindUrls(baseURL, htmlBody, "img", "src")
 	if err != nil {
 		return nil, err
 	} else {
