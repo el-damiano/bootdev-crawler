@@ -3,14 +3,65 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/el-damiano/bootdev-crawler/internal/goquery"
 )
 
 func main() {
-	fmt.Println("Hello, World!")
+	if len(os.Args) < 2 {
+		fmt.Println("no website provided")
+		os.Exit(1)
+	} else if len(os.Args) > 2 {
+		fmt.Println("too many arguments provided")
+		os.Exit(1)
+	}
+
+	fmt.Printf("starting crawl of: %v\n", os.Args[1])
+	html, err := getHTML(os.Args[1])
+	if err != nil {
+		fmt.Printf("error getting HTML: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\ndata:\n%v\n", html)
+}
+
+func getHTML(rawURL string) (string, error) {
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "BootCrawler/1.0")
+	req.UserAgent()
+
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode > 399 {
+		return "", fmt.Errorf("HTTP ERROR: %v", res.StatusCode)
+	}
+
+	contentType := res.Header.Get("content-type")
+	if contentType != "text/html" {
+		return "", fmt.Errorf("ERROR: unsupported content-type: %v", contentType)
+	}
+
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
 }
 
 type PageData struct {
