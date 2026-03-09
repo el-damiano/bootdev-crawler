@@ -71,7 +71,7 @@ func TestURLnormalize(t *testing.T) {
 
 	for i, c := range cases {
 		t.Run(fmt.Sprintf("Test case %v", i), func(t *testing.T) {
-			got, err := URLnormalize(c.inputURL)
+			got, err := urlNormalize(c.inputURL)
 			if (err != nil) != c.wantErr {
 				t.Errorf("FAIL: unexpected error: %v", err)
 				return

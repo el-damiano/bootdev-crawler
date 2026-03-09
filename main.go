@@ -21,14 +21,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("starting crawl of: %v\n", os.Args[1])
-	html, err := getHTML(os.Args[1])
-	if err != nil {
-		fmt.Printf("error getting HTML: %v\n", err)
-		os.Exit(1)
-	}
+	argument := os.Args[1]
+	fmt.Println(">>> START of crawling")
 
-	fmt.Printf("\ndata:\n%v\n", html)
+	pages := make(map[string]int)
+	crawlPage(argument, argument, pages)
+
+	for normalizedURL, count := range pages {
+		fmt.Printf("%d - %s\n", count, normalizedURL)
+	}
 }
 
 func getHTML(rawURL string) (string, error) {
@@ -52,7 +53,8 @@ func getHTML(rawURL string) (string, error) {
 	}
 
 	contentType := res.Header.Get("content-type")
-	if contentType != "text/html" {
+	contentTypeIsUnsupported := !strings.Contains(contentType, "text/html")
+	if contentTypeIsUnsupported {
 		return "", fmt.Errorf("ERROR: unsupported content-type: %v", contentType)
 	}
 
@@ -62,6 +64,54 @@ func getHTML(rawURL string) (string, error) {
 	}
 
 	return string(data), nil
+}
+
+func crawlPage(urlBaseRaw, urlCurrentRaw string, pages map[string]int) {
+	urlBase, err := url.Parse(urlBaseRaw)
+	if err != nil {
+		fmt.Printf("ERROR(crawl): couldn't parse '%s': %v\n", urlBaseRaw, err)
+		return
+	}
+	urlCurrent, err := url.Parse(urlCurrentRaw)
+	if err != nil {
+		fmt.Printf("ERROR(crawl): couldn't parse '%s': %v\n", urlCurrentRaw, err)
+		return
+	}
+
+	urlHasDifferentDomain := urlBase.Host != urlCurrent.Host
+	if urlHasDifferentDomain {
+		return
+	}
+
+	urlCurrentNormalized, err := urlNormalize(urlCurrentRaw)
+	if err != nil {
+		fmt.Printf("ERROR(crawl): couldn't normalize '%s': %v\n", urlCurrentRaw, err)
+		return
+	}
+
+	_, ok := pages[urlCurrentNormalized]
+	if ok {
+		pages[urlCurrentNormalized]++
+		return
+	}
+
+	pages[urlCurrentNormalized] = 1
+	fmt.Printf(">>> crawling: %v\n", urlBaseRaw)
+
+	html, err := getHTML(urlCurrentRaw)
+	if err != nil {
+		fmt.Printf("ERROR(crawl): couldn't get HTML: %v\n", urlCurrentRaw, err)
+		return
+	}
+
+	urls, err := getUrlsFromHTML(html, urlBase)
+	if err != nil {
+		fmt.Printf("ERROR(crawl): couldn't get URLs from HTML: %v\n", urlCurrentRaw, err)
+		return
+	}
+	for _, url := range urls {
+		crawlPage(urlBaseRaw, url, pages)
+	}
 }
 
 type PageData struct {
@@ -149,7 +199,7 @@ func getImageUrlsFromHTML(htmlBody string, baseURL *url.URL) ([]string, error) {
 //
 // The URL may be relative or absolute, but not empty.
 // It can also be a sentence, as that's not being checked.
-func URLnormalize(urlRaw string) (string, error) {
+func urlNormalize(urlRaw string) (string, error) {
 	if urlRaw == "" {
 		return "", errors.New("Empty URL")
 	}
