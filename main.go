@@ -8,9 +8,18 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/el-damiano/bootdev-crawler/internal/goquery"
 )
+
+type config struct {
+	pages              map[string]PageData
+	urlBase            *url.URL
+	mutex              *sync.Mutex
+	concurrencyControl chan struct{}
+	waitGroup          *sync.WaitGroup
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -21,15 +30,30 @@ func main() {
 		os.Exit(1)
 	}
 
-	argument := os.Args[1]
-	fmt.Println(">>> START of crawling")
-
-	pages := make(map[string]int)
-	crawlPage(argument, argument, pages)
-
-	for normalizedURL, count := range pages {
-		fmt.Printf("%d - %s\n", count, normalizedURL)
+	urlBaseRaw := os.Args[1]
+	urlBase, err := url.Parse(urlBaseRaw)
+	if err != nil {
+		fmt.Printf("ERROR(crawl): couldn't parse '%s': %v\n", urlBaseRaw, err)
+		return
 	}
+
+	fmt.Println(">>> START of crawling")
+	bufferSize := 8
+	config := config{
+		pages:              make(map[string]PageData),
+		urlBase:            urlBase,
+		concurrencyControl: make(chan struct{}, bufferSize),
+		mutex:              &sync.Mutex{},
+		waitGroup:          &sync.WaitGroup{},
+	}
+
+	config.crawlPage(urlBaseRaw)
+	config.waitGroup.Wait()
+
+	for url, pageData := range config.pages {
+		fmt.Printf("%s - %s\n", url, pageData.Heading)
+	}
+
 }
 
 func getHTML(rawURL string) (string, error) {
@@ -66,51 +90,79 @@ func getHTML(rawURL string) (string, error) {
 	return string(data), nil
 }
 
-func crawlPage(urlBaseRaw, urlCurrentRaw string, pages map[string]int) {
-	urlBase, err := url.Parse(urlBaseRaw)
-	if err != nil {
-		fmt.Printf("ERROR(crawl): couldn't parse '%s': %v\n", urlBaseRaw, err)
-		return
-	}
+func (config *config) crawlPage(urlCurrentRaw string) {
 	urlCurrent, err := url.Parse(urlCurrentRaw)
 	if err != nil {
 		fmt.Printf("ERROR(crawl): couldn't parse '%s': %v\n", urlCurrentRaw, err)
 		return
 	}
 
-	urlHasDifferentDomain := urlBase.Host != urlCurrent.Host
-	if urlHasDifferentDomain {
+	if config.urlBase.Host != urlCurrent.Host {
 		return
 	}
 
-	urlCurrentNormalized, err := urlNormalize(urlCurrentRaw)
-	if err != nil {
-		fmt.Printf("ERROR(crawl): couldn't normalize '%s': %v\n", urlCurrentRaw, err)
-		return
-	}
-
-	_, ok := pages[urlCurrentNormalized]
-	if ok {
-		pages[urlCurrentNormalized]++
-		return
-	}
-
-	pages[urlCurrentNormalized] = 1
-	fmt.Printf(">>> crawling: %v\n", urlBaseRaw)
+	fmt.Printf(">>> crawling: %v\n", urlCurrentRaw)
 
 	html, err := getHTML(urlCurrentRaw)
 	if err != nil {
-		fmt.Printf("ERROR(crawl): couldn't get HTML: %v\n", urlCurrentRaw, err)
+		fmt.Printf("ERROR(crawl): couldn't get HTML of '%s': %v\n", urlCurrentRaw, err)
 		return
 	}
 
-	urls, err := getUrlsFromHTML(html, urlBase)
+	urls, err := getUrlsFromHTML(html, config.urlBase)
 	if err != nil {
-		fmt.Printf("ERROR(crawl): couldn't get URLs from HTML: %v\n", urlCurrentRaw, err)
+		fmt.Printf("ERROR(crawl): couldn't get URLs from HTML: %v of %s\n", err, urlCurrentRaw)
 		return
 	}
-	for _, url := range urls {
-		crawlPage(urlBaseRaw, url, pages)
+
+	for _, urlToCrawlRaw := range urls {
+		urlToCrawl, err := url.Parse(urlToCrawlRaw)
+		if err != nil {
+			fmt.Printf("ERROR(crawl): couldn't parse '%s': %v\n", urlToCrawlRaw, err)
+			continue
+		}
+
+		if config.urlBase.Host != urlToCrawl.Host {
+			continue
+		}
+
+		urlNormalized, err := urlNormalize(urlToCrawlRaw)
+		if err != nil {
+			fmt.Printf("ERROR(crawl): couldn't normalize '%s': %v\n", urlToCrawlRaw, err)
+			continue
+		}
+
+		htmlCrawled, err := getHTML(urlToCrawlRaw)
+		if err != nil {
+			fmt.Printf("ERROR(crawl): couldn't get HTML of '%s': %v\n", urlToCrawlRaw, err)
+			continue
+		}
+
+		isFirstTimeCrawling := config.addPageVisit(htmlCrawled, urlNormalized)
+		if !isFirstTimeCrawling {
+			continue
+		}
+
+		config.waitGroup.Add(1)
+		go func(url string) {
+			defer config.waitGroup.Done()
+			config.concurrencyControl <- struct{}{}
+			defer func() { <-config.concurrencyControl }()
+			config.crawlPage(urlNormalized)
+		}(urlToCrawlRaw)
+	}
+}
+
+func (config *config) addPageVisit(html, urlNormalized string) (isFirst bool) {
+	config.mutex.Lock()
+	defer config.mutex.Unlock()
+
+	_, ok := config.pages[urlNormalized]
+	if ok {
+		return false
+	} else {
+		config.pages[urlNormalized] = extractPageData(html, urlNormalized)
+		return true
 	}
 }
 
@@ -206,12 +258,11 @@ func urlNormalize(urlRaw string) (string, error) {
 
 	urlParsed, err := url.Parse(urlRaw)
 	if err != nil {
-		fmt.Println(err)
-		return "", err
+		return "", fmt.Errorf("couldn't parse URL: %w", err)
 	}
 
-	urlFullPath := strings.ToLower(urlParsed.Host + urlParsed.Path)
-	urlNormalized := strings.TrimRight(urlFullPath, "/")
+	urlFullPath := strings.ToLower(urlParsed.Host + strings.ReplaceAll(urlParsed.Path, "//", "/"))
+	urlNormalized := strings.TrimSuffix(urlFullPath, "/")
 
 	return urlNormalized, nil
 }
