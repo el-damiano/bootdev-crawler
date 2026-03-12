@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -19,14 +20,20 @@ type config struct {
 	mutex              *sync.Mutex
 	concurrencyControl chan struct{}
 	waitGroup          *sync.WaitGroup
+	maxPages           int
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	possibleArguments := []string{"<URL>", "<max concurrency>", "<max pages>"}
+	arguments := os.Args[1:]
+
+	if len(arguments) < 1 {
 		fmt.Println("no website provided")
+		fmt.Printf("Usage: bootdev-crawler %v\n", possibleArguments)
 		os.Exit(1)
-	} else if len(os.Args) > 2 {
+	} else if len(arguments) > len(possibleArguments) {
 		fmt.Println("too many arguments provided")
+		fmt.Printf("Usage: bootdev-crawler %v\n", possibleArguments)
 		os.Exit(1)
 	}
 
@@ -38,13 +45,26 @@ func main() {
 	}
 
 	fmt.Println(">>> START of crawling")
+
 	bufferSize := 8
+	if len(arguments) == 2 {
+		argSize, _ := strconv.Atoi(os.Args[2])
+		bufferSize = argSize
+	}
+
+	maxPages := 100
+	if len(arguments) == 3 {
+		argPages, _ := strconv.Atoi(os.Args[3])
+		maxPages = argPages
+	}
+
 	config := config{
 		pages:              make(map[string]PageData),
 		urlBase:            urlBase,
 		concurrencyControl: make(chan struct{}, bufferSize),
 		mutex:              &sync.Mutex{},
 		waitGroup:          &sync.WaitGroup{},
+		maxPages:           maxPages,
 	}
 
 	config.waitGroup.Add(1)
@@ -97,6 +117,9 @@ func (config *config) crawlPage(urlCurrentRaw string) {
 		<-config.concurrencyControl
 		config.waitGroup.Done()
 	}()
+	if config.maxPageCountExceeded() {
+		return
+	}
 
 	urlParsed, err := url.Parse(urlCurrentRaw)
 	if err != nil {
@@ -144,6 +167,17 @@ func (config *config) addPageVisit(urlNormalized string) (visitedBefore bool) {
 		return true
 	} else {
 		config.pages[urlNormalized] = PageData{URL: urlNormalized}
+		return false
+	}
+}
+
+func (config *config) maxPageCountExceeded() bool {
+	config.mutex.Lock()
+	defer config.mutex.Unlock()
+
+	if len(config.pages) > config.maxPages {
+		return true
+	} else {
 		return false
 	}
 }
