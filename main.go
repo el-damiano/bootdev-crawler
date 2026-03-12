@@ -47,11 +47,12 @@ func main() {
 		waitGroup:          &sync.WaitGroup{},
 	}
 
+	config.waitGroup.Add(1)
 	config.crawlPage(urlBaseRaw)
 	config.waitGroup.Wait()
 
 	for url, pageData := range config.pages {
-		fmt.Printf("%s - %s\n", url, pageData.Heading)
+		fmt.Printf("%s - %s\n", url, strings.TrimSpace(pageData.Heading))
 	}
 
 }
@@ -91,79 +92,66 @@ func getHTML(rawURL string) (string, error) {
 }
 
 func (config *config) crawlPage(urlCurrentRaw string) {
-	urlCurrent, err := url.Parse(urlCurrentRaw)
+	config.concurrencyControl <- struct{}{}
+	defer func() {
+		<-config.concurrencyControl
+		config.waitGroup.Done()
+	}()
+
+	urlParsed, err := url.Parse(urlCurrentRaw)
 	if err != nil {
-		fmt.Printf("ERROR(crawl): couldn't parse '%s': %v\n", urlCurrentRaw, err)
+		fmt.Printf("ERROR: couldn't parse '%s': %v\n", urlCurrentRaw, err)
 		return
 	}
 
-	if config.urlBase.Host != urlCurrent.Host {
+	if config.urlBase.Hostname() != urlParsed.Hostname() {
 		return
 	}
 
+	urlNormalized, err := urlNormalize(urlCurrentRaw)
+	if err != nil {
+		fmt.Printf("ERROR: couldn't normalize '%s': %v\n", urlCurrentRaw, err)
+		return
+	}
+
+	visitedBefore := config.addPageVisit(urlNormalized)
+	if visitedBefore {
+		return
+	}
 	fmt.Printf(">>> crawling: %v\n", urlCurrentRaw)
 
-	html, err := getHTML(urlCurrentRaw)
+	htmlRaw, err := getHTML(urlCurrentRaw)
 	if err != nil {
-		fmt.Printf("ERROR(crawl): couldn't get HTML of '%s': %v\n", urlCurrentRaw, err)
-		return
+		fmt.Printf("ERROR: couldn't get HTML of '%s': %v\n", urlCurrentRaw, err)
 	}
 
-	urls, err := getUrlsFromHTML(html, config.urlBase)
-	if err != nil {
-		fmt.Printf("ERROR(crawl): couldn't get URLs from HTML: %v of %s\n", err, urlCurrentRaw)
-		return
-	}
+	pageData := extractPageData(htmlRaw, urlCurrentRaw)
+	config.setPageData(urlNormalized, pageData)
 
-	for _, urlToCrawlRaw := range urls {
-		urlToCrawl, err := url.Parse(urlToCrawlRaw)
-		if err != nil {
-			fmt.Printf("ERROR(crawl): couldn't parse '%s': %v\n", urlToCrawlRaw, err)
-			continue
-		}
-
-		if config.urlBase.Host != urlToCrawl.Host {
-			continue
-		}
-
-		urlNormalized, err := urlNormalize(urlToCrawlRaw)
-		if err != nil {
-			fmt.Printf("ERROR(crawl): couldn't normalize '%s': %v\n", urlToCrawlRaw, err)
-			continue
-		}
-
-		htmlCrawled, err := getHTML(urlToCrawlRaw)
-		if err != nil {
-			fmt.Printf("ERROR(crawl): couldn't get HTML of '%s': %v\n", urlToCrawlRaw, err)
-			continue
-		}
-
-		isFirstTimeCrawling := config.addPageVisit(htmlCrawled, urlNormalized)
-		if !isFirstTimeCrawling {
-			continue
-		}
-
+	for _, urlNext := range pageData.OutgoingLinks {
 		config.waitGroup.Add(1)
-		go func(url string) {
-			defer config.waitGroup.Done()
-			config.concurrencyControl <- struct{}{}
-			defer func() { <-config.concurrencyControl }()
-			config.crawlPage(urlNormalized)
-		}(urlToCrawlRaw)
+		go config.crawlPage(urlNext)
 	}
+
 }
 
-func (config *config) addPageVisit(html, urlNormalized string) (isFirst bool) {
+func (config *config) addPageVisit(urlNormalized string) (visitedBefore bool) {
 	config.mutex.Lock()
 	defer config.mutex.Unlock()
 
-	_, ok := config.pages[urlNormalized]
-	if ok {
-		return false
-	} else {
-		config.pages[urlNormalized] = extractPageData(html, urlNormalized)
+	_, visited := config.pages[urlNormalized]
+	if visited {
 		return true
+	} else {
+		config.pages[urlNormalized] = PageData{URL: urlNormalized}
+		return false
 	}
+}
+
+func (config *config) setPageData(urlNormalized string, pageData PageData) {
+	config.mutex.Lock()
+	defer config.mutex.Unlock()
+	config.pages[urlNormalized] = pageData
 }
 
 type PageData struct {

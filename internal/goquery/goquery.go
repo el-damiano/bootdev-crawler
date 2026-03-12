@@ -42,16 +42,27 @@ func (p Parser) FindUrls(baseURL *url.URL, html, element, attribute string) ([]s
 		return nil, err
 	}
 
-	var elements []string
+	var urls []string
 	document.Find(element).Each(func(_ int, s *goquery.Selection) {
 		link, ok := s.Attr(attribute)
-		if ok && len(link) > 0 {
-			if link[0] == '/' {
-				link = fmt.Sprintf("%v%v", baseURL, link)
-			}
-			elements = append(elements, link)
+		if !ok {
+			return
 		}
+		link = strings.TrimSpace(link)
+		if link == "" {
+			return
+		}
+
+		linkParsed, err := url.Parse(link)
+		if err != nil {
+			fmt.Printf("couldn't parse link %q: %v\n", link, err)
+			return
+		}
+
+		linkResolved := baseURL.ResolveReference(linkParsed)
+		urls = append(urls, linkResolved.String())
+
 	})
 
-	return elements, nil
+	return urls, nil
 }
