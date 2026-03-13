@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,6 +76,7 @@ func main() {
 	for url, pageData := range config.pages {
 		fmt.Printf("%s - %s\n", url, strings.TrimSpace(pageData.Heading))
 	}
+	writeJsonReport(config.pages, "report.json")
 
 }
 
@@ -209,11 +212,11 @@ func getHTML(rawURL string) (string, error) {
 }
 
 type PageData struct {
-	URL            string
-	Heading        string
-	FirstParagraph string
-	OutgoingLinks  []string
-	ImageUrls      []string
+	URL            string   `json:"url"`
+	Heading        string   `json:"heading"`
+	FirstParagraph string   `json:"first_paragraph"`
+	OutgoingLinks  []string `json:"outgoing_links"`
+	ImageUrls      []string `json:"image_urls"`
 }
 
 func extractPageData(html, pageURL string) PageData {
@@ -243,6 +246,38 @@ func extractPageData(html, pageURL string) PageData {
 	pageData.OutgoingLinks = outgoingLinks
 	pageData.ImageUrls = imageUrls
 	return pageData
+}
+
+func writeJsonReport(pages map[string]PageData, filename string) error {
+	count := len(pages)
+	if count == 0 {
+		fmt.Println("No data to write to JSON")
+		return nil
+	}
+
+	keys := make([]string, 0, count)
+	for key := range pages {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+
+	sorted := make([]PageData, 0, count)
+	for _, key := range keys {
+		sorted = append(sorted, pages[key])
+	}
+
+	data, err := json.MarshalIndent(sorted, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal JSON: %w", err)
+	}
+
+	err = os.WriteFile(filename, data, 0644)
+	if err != nil {
+		return fmt.Errorf("write JSON to file '%s': %w", filename, err)
+	}
+
+	fmt.Printf("Report written to %s\n", filename)
+	return nil
 }
 
 type Parser interface {
