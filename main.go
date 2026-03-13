@@ -110,7 +110,6 @@ func (config *config) crawlPage(urlCurrentRaw string) {
 	if visitedBefore {
 		return
 	}
-	fmt.Printf(">>> crawling: %v\n", urlCurrentRaw)
 
 	htmlRaw, err := getHTML(urlCurrentRaw)
 	if err != nil {
