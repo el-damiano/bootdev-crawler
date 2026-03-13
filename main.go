@@ -77,40 +77,6 @@ func main() {
 
 }
 
-func getHTML(rawURL string) (string, error) {
-	client := &http.Client{}
-
-	req, err := http.NewRequest("GET", rawURL, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("User-Agent", "BootCrawler/1.0")
-	req.UserAgent()
-
-	res, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode > 399 {
-		return "", fmt.Errorf("HTTP ERROR: %v", res.StatusCode)
-	}
-
-	contentType := res.Header.Get("content-type")
-	contentTypeIsUnsupported := !strings.Contains(contentType, "text/html")
-	if contentTypeIsUnsupported {
-		return "", fmt.Errorf("ERROR: unsupported content-type: %v", contentType)
-	}
-
-	data, err := io.ReadAll(res.Body)
-	if err != nil {
-		return "", err
-	}
-
-	return string(data), nil
-}
-
 func (config *config) crawlPage(urlCurrentRaw string) {
 	config.concurrencyControl <- struct{}{}
 	defer func() {
@@ -186,6 +152,60 @@ func (config *config) setPageData(urlNormalized string, pageData PageData) {
 	config.mutex.Lock()
 	defer config.mutex.Unlock()
 	config.pages[urlNormalized] = pageData
+}
+
+// Normalizes a URL.
+//
+// The URL may be relative or absolute, but not empty.
+// It can also be a sentence, as that's not being checked.
+func urlNormalize(urlRaw string) (string, error) {
+	if urlRaw == "" {
+		return "", errors.New("Empty URL")
+	}
+
+	urlParsed, err := url.Parse(urlRaw)
+	if err != nil {
+		return "", fmt.Errorf("couldn't parse URL: %w", err)
+	}
+
+	urlFullPath := strings.ToLower(urlParsed.Host + strings.ReplaceAll(urlParsed.Path, "//", "/"))
+	urlNormalized := strings.TrimSuffix(urlFullPath, "/")
+
+	return urlNormalized, nil
+}
+
+func getHTML(rawURL string) (string, error) {
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "BootCrawler/1.0")
+	req.UserAgent()
+
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode > 399 {
+		return "", fmt.Errorf("HTTP ERROR: %v", res.StatusCode)
+	}
+
+	contentType := res.Header.Get("content-type")
+	contentTypeIsUnsupported := !strings.Contains(contentType, "text/html")
+	if contentTypeIsUnsupported {
+		return "", fmt.Errorf("ERROR: unsupported content-type: %v", contentType)
+	}
+
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
 }
 
 type PageData struct {
@@ -267,24 +287,4 @@ func getImageUrlsFromHTML(htmlBody string, baseURL *url.URL) ([]string, error) {
 	} else {
 		return urls, nil
 	}
-}
-
-// Normalizes a URL.
-//
-// The URL may be relative or absolute, but not empty.
-// It can also be a sentence, as that's not being checked.
-func urlNormalize(urlRaw string) (string, error) {
-	if urlRaw == "" {
-		return "", errors.New("Empty URL")
-	}
-
-	urlParsed, err := url.Parse(urlRaw)
-	if err != nil {
-		return "", fmt.Errorf("couldn't parse URL: %w", err)
-	}
-
-	urlFullPath := strings.ToLower(urlParsed.Host + strings.ReplaceAll(urlParsed.Path, "//", "/"))
-	urlNormalized := strings.TrimSuffix(urlFullPath, "/")
-
-	return urlNormalized, nil
 }
